@@ -21,6 +21,12 @@ def gen_markup_dynamic(url, channelId):
                InlineKeyboardButton("Пропустить задание", callback_data=f"cb_skip"))
     return markup
 
+def gen_markup_next():
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("Назад", callback_data=f"cb_getNewAction"))
+    return markup
+
 
 def gen_markup_starter():
     markup = ReplyKeyboardMarkup()
@@ -61,7 +67,7 @@ def getChannel(userId, userName):
     mycursor.execute("SELECT channelName, channelLink FROM channels")
 
     myresult = mycursor.fetchall()
-
+    nowork = False
     for x in myresult:
         try:
             isChannelMember = bot.get_chat_member(x[0], userId)
@@ -70,12 +76,16 @@ def getChannel(userId, userName):
                 #bot.edit_message_text('Edit test', chat_id=user, message_id=msgId)
                 bot.send_message(userId, 'Подпишись на канал {0} и получи 100 руб на счет'.format(x[0]), reply_markup=gen_markup_dynamic(x[1], x[0]))
                 print('user not sub')
+                nowork = False
                 break
             else:
                 print('Not have any job')
+                nowork = True
         except Exception as e:
             print(e)
             continue
+    if nowork:
+        bot.send_message(userId, "Прости, но задач временно нет!")
 
 def checkCompleteSubscription(channelId, userId, lastMsg):
     isChannelMember = bot.get_chat_member(channelId, userId)
@@ -103,13 +113,14 @@ def updateChannelCount(channelId, userId, lastMsg):
     mycursor.execute(sql, val)
     mydb.commit()
     print(mycursor.rowcount, "record(s) affected")
-    bot.edit_message_text('Ты заработал 100 рублей', chat_id=userId, message_id=lastMsg, )
+    bot.edit_message_text('Ты заработал 100 рублей', chat_id=userId, message_id=lastMsg, reply_markup=gen_markup_next())
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     data = call.data
     if 'cb_getReward' in data:
         reward = data.split(',')
+        print(reward[1], call.from_user.id, call.message.message_id)
         checkCompleteSubscription(reward[1], call.from_user.id, call.message.message_id)
         bot.answer_callback_query(call.id, "Get Reward")
     # if call.data == "cb_getReward":
@@ -120,6 +131,8 @@ def callback_query(call):
         bot.answer_callback_query(call.id, "Click Balance")
         bot.send_message(call.from_user.id, '{0}, твой баланс: 0 руб.'.format(call.from_user.username))
         print(call.from_user.id)
+    elif call.data == "cb_getNewAction":
+        getChannel(call.from_user.id, call.from_user.username)  # get channel for subscribe
     elif call.data == "cb_rules":
         bot.answer_callback_query(call.id, "Click Rules")
     elif call.data == "cb_inviteFriends":
