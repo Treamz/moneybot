@@ -95,7 +95,7 @@ def getChannel(userId, userName):
 
 def checkCompleteSubscription(channelId, userId, lastMsg):
     isChannelMember = bot.get_chat_member(channelId, userId)
-    if isChannelMember:
+    if isChannelMember.status == "member":
         print('member')
         updateChannelCount(channelId, userId, lastMsg)
     else:
