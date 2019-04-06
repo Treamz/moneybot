@@ -18,7 +18,7 @@ bot = telebot.TeleBot(API_TOKEN)
 REFCOUNT = 10
 
 def printit():
-  threading.Timer(5.0, printit).start()
+  threading.Timer(3600.0, printit).start()
   print("Hello, World!")
   status = bot.get_chat_member("@nedocoder",	630184594)
   print(status)
@@ -32,11 +32,11 @@ class RepeatTimer(Timer):
 
 
 def DBUpdater():
-    #checkUser() # isActiveUser Status
-    checkTask() # Check Tasks
+    checkUser()  # isActiveUser Status
+    checkTask()  # Check Tasks
 
 
-timer = RepeatTimer(1, DBUpdater)
+timer = RepeatTimer(3600, DBUpdater)
 timer.start()
 
 
@@ -63,7 +63,7 @@ def checkTask():
     mycursor.execute(req)
     tasks = mycursor.fetchall()
     for task in tasks:
-        print(task)
+        print("TASK",task)
         isChannelMember = bot.get_chat_member(task[4], task[0]).status
         actionDate = datetime.datetime.strptime(task[5], '%Y-%m-%d')
         if isChannelMember == "member" and (dateNow - actionDate).days >= 4:
@@ -160,12 +160,13 @@ def extract_unique_code(text):
 
 def gen_markup_dynamic(url, channelId):
     dataChannel = 'cb_getReward,{0}'.format(channelId)
+    dataSkip = 'cb_skip,{0}'.format(channelId)
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
     markup.add(InlineKeyboardButton("Вступить в группу", url=url,
                                     callback_data=f"cb_targetChannel"),
                InlineKeyboardButton("Получить награду", callback_data=dataChannel),
-               InlineKeyboardButton("Пропустить задание", callback_data=f"cb_skip"))
+               InlineKeyboardButton("Пропустить задание", callback_data=dataSkip))
     return markup
 
 def gen_markup_next():
@@ -210,15 +211,23 @@ def getBalance(user):
         port="8889"
     )
     mycursor = mydb.cursor()
-    sql = "SELECT * FROM actions WHERE userId = %s AND status = 'pending'"
+    req_pendingBalance = "SELECT * FROM actions WHERE userId = %s AND status = 'pending'"
     val = (user.id,)
-    mycursor.execute(sql, val)
+    mycursor.execute(req_pendingBalance, val)
     myresult = mycursor.fetchall()
-    finalBalance = 0;
+
+    finalWaitingBalance = 0;
+    activeBalance = 0
+    print(myresult)
     for x in myresult:
-        finalBalance += x[4]
-    print(finalBalance)
-    bot.send_message(user.id, "Баланс в ожидании: {0} руб\nДоступно к выводу: 0".format(finalBalance))
+        print(myresult)
+        finalWaitingBalance += x[4]
+    reqActive = "SELECT balance FROM users WHERE id = %s"
+    mycursor.execute(reqActive, val)
+    myresult = mycursor.fetchall()
+    activeBalance = myresult[0][0]
+    print(finalWaitingBalance)
+    bot.send_message(user.id, "Баланс в ожидании: {0} руб\nДоступно к выводу: {1} руб".format(finalWaitingBalance, activeBalance))
 
 
 
@@ -238,7 +247,7 @@ def createUser(data):
     print(mycursor.rowcount, "record inserted.")
 
 # Get Channel
-def getChannel(userId, userName):
+def getChannel(userId, userName, lastMsg = None, skipped = None):
     mydb = mysql.connector.connect(
         host="localhost",
         user="root",
@@ -247,20 +256,27 @@ def getChannel(userId, userName):
         port="8889"
     )
     mycursor = mydb.cursor()
-    mycursor.execute("SELECT * FROM channels WHERE currentAmount < finalAmount AND JSON_CONTAINS(`users`, JSON_OBJECT('user', %s)) = 0", (userId,))
+    if skipped == None:
+        mycursor.execute("SELECT * FROM channels WHERE currentAmount < finalAmount AND JSON_CONTAINS(`users`, JSON_OBJECT('user', %s)) = 0", (userId,))
+    else:
+        mycursor.execute("SELECT * FROM channels WHERE channelName != %s AND currentAmount < finalAmount AND JSON_CONTAINS(`users`, JSON_OBJECT('user', %s)) = 0", (userId, skipped))
 
     myresult = mycursor.fetchall()
     nowork = False
     print(myresult)
-
+    i = 0
     for x in myresult:
+        i += 1
         try:
             isChannelMember = bot.get_chat_member(x[1], userId)
             isChannelMember = str(isChannelMember.status)
             if isChannelMember == "left":
                 print(x[2],x[1])
                 # bot.edit_message_text('Edit test', chat_id=user, message_id=msgId)
-                bot.send_message(userId, 'Подпишись на канал {0} и получи 100 руб на счет'.format(x[1]), reply_markup=gen_markup_dynamic(x[2], x[1]))
+                if lastMsg != None:
+                    bot.edit_message_text('Подпишись на канал {0} и получи 100 руб на счет'.format(x[1]), chat_id=userId, message_id=lastMsg, reply_markup=gen_markup_dynamic(x[2], x[1]))
+                else:
+                    bot.send_message(userId, 'Подпишись на канал {0} и получи 100 руб на счет'.format(x[1]), reply_markup=gen_markup_dynamic(x[2], x[1]))
                 print('user not sub')
                 nowork = False
                 break
@@ -268,6 +284,8 @@ def getChannel(userId, userName):
                 print('Not have any job')
                 nowork = True
         except Exception as e:
+            if i == len(myresult):
+                nowork = True
             print(e)
             continue
     if nowork or len(myresult) == 0:
@@ -342,9 +360,11 @@ def callback_query(call):
         bot.send_message(call.from_user.id, '{0}, твой баланс: 0 руб.'.format(call.from_user.username))
         print(call.from_user.id)
     elif call.data == "cb_getNewAction":
-        getChannel(call.from_user.id, call.from_user.username)  # get channel for subscribe
-    elif call.data == "cb_skip":
-        getChannel(call.from_user.id, call.from_user.username)  # get channel for subscribe
+        getChannel(call.from_user.id, call.from_user.username, call.message.message_id)  # get channel for subscribe
+    elif "cb_skip" in data:
+        reward = data.split(',')
+        print(reward)
+        getChannel(call.from_user.id, call.from_user.username,call.message.message_id, reward[1])  # get channel for subscribe
     elif call.data == "cb_rules":
         bot.answer_callback_query(call.id, "Click Rules")
     elif call.data == "cb_inviteFriends":
@@ -464,7 +484,7 @@ def echo_message(message):
     if message.text == 'Заработать':
         getChannel(message.from_user.id, message.chat.username)  # get channel for subscribe
     elif message.text == 'Баланс':
-        bot.send_message(message.chat.id, '{0}, твой баланс 0 руб'.format(message.chat.username))
+        #bot.send_message(message.chat.id, '{0}, твой баланс 0 руб'.format(message.chat.username))
         getBalance(message.chat)
     elif message.text == 'Правила':
         bot.send_message(message.chat.id,
